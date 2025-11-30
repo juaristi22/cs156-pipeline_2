@@ -1,0 +1,97 @@
+{
+    "pipeline": {
+        "name": "SCF to CPS Net Worth Imputation",
+        "description": "Full variable imputation of net worth from Survey of Consumer Finances to Current Population Survey",
+        "version": "1.0",
+        "note": "Hyperparameters match the original TabSyn paper and implementation"
+    },
+
+    "datasets": {
+        "donor": {
+            "name": "scf_2022",
+            "description": "Survey of Consumer Finances 2022",
+            "type": "donor"
+        },
+        "receiver": {
+            "name": "cps_2023",
+            "description": "Current Population Survey 2023",
+            "type": "receiver"
+        }
+    },
+
+    "variables": {
+        "predictors": [
+            "is_female",
+            "age",
+            "race",
+            "employment_income",
+            "interest_dividend_income",
+            "pension_income"
+        ],
+        "target": "transformed_networth",
+        "weight": "wgt"
+    },
+
+    "preprocessing": {
+        "normalization": "quantile",
+        "n_quantiles": 1000,
+        "handle_missing": "mean",
+        "use_donor_statistics": true
+    },
+
+    "model": {
+        "vae": {
+            "num_layers": 2,
+            "d_token": 4,
+            "n_head": 1,
+            "factor": 32,
+            "token_bias": true,
+            "epochs": 2000,
+            "batch_size": 4096,
+            "learning_rate": 1e-3,
+            "weight_decay": 0,
+            "max_beta": 1e-2,
+            "min_beta": 1e-5,
+            "lambd": 0.7,
+            "scheduler_factor": 0.95,
+            "scheduler_patience": 10,
+            "early_stopping_patience": 10
+        },
+        "diffusion": {
+            "hidden_dim": 1024,
+            "epochs": 10000,
+            "batch_size": 4096,
+            "learning_rate": 1e-3,
+            "weight_decay": 0,
+            "scheduler_factor": 0.9,
+            "scheduler_patience": 20,
+            "early_stopping_patience": 500
+        },
+        "sampling": {
+            "num_steps": 50,
+            "sigma_min": 0.002,
+            "sigma_max": 80,
+            "rho": 7,
+            "S_churn": 1,
+            "S_min": 0,
+            "S_max": "inf",
+            "S_noise": 1,
+            "N": 20
+        }
+    },
+
+    "imputation": {
+        "num_trials": 50,
+        "batch_size": 2048,
+        "save_individual_trials": true,
+        "average_method": "mean"
+    },
+
+    "output": {
+        "save_preprocessed": true,
+        "save_models": true,
+        "save_imputed": true,
+        "inverse_transform": true,
+        "format": "csv"
+    }
+}

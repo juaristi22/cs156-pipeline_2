@@ -1,0 +1,255 @@
+\section{Models}
+\label{sec:models}
+
+% Addresses instructions.md section 5
+
+\subsection{Overview of Approaches}
+
+Full variable imputation requires learning the conditional distribution $p(\text{networth} \mid \text{covariates})$ from the donor survey (SCF) and then sampling from this distribution conditioning on each recipient record (CPS). This task calls for the implementation of generative models that can both estimate conditional densities and produce stochastic samples from them based on given covariates.
+
+We evaluate three deep generative approaches, each representing a distinct paradigm for conditional density estimation: RealNVP, Mixture Density Networks, and TabSyn. As a baseline, we include Quantile Random Forests (Section~\ref{sec:qrf}), which prior work established as the best-performing traditional method for this task. All methods share the goal of learning $p(y \mid x)$ rather than just $\mathbb{E}[y \mid x]$, preserving the accurate representation and distributional properties essential for downstream policy analysis.
+
+\subsection{RealNVP (Normalizing Flows)}
+\label{sec:realnvp}
+
+\subsubsection{Mathematical Foundation}
+
+Normalizing flows provide a framework for density estimation by transforming a simple base distribution into a complex target distribution through a sequence of invertible mappings \citep{dinh2016density}. Invertibility allows tracing any observed data point $y$ back to its corresponding latent variable $z$, and the Jacobian determinant of the transformation captures exactly how the density changes at every step. This enables exact likelihood computation without needing to approximate the marginal density of the distribution.
+
+Formally, let $z \sim p_Z(z)$ be a random variable with a simple base distribution (typically a standard Gaussian is used), and let $f: \mathbb{R}^D \to \mathbb{R}^D$ be an invertible transformation. The density of $y = f(z)$ is given by the change of variables formula:
+\begin{equation}
+p_Y(y) = p_Z(f^{-1}(y)) \left| \det \frac{\partial f^{-1}}{\partial y} \right| = p_Z(z) \left| \det \frac{\partial f}{\partial z} \right|^{-1}
+\end{equation}
+
+For a composition of $K$ invertible transformations $f = f_K \circ f_{K-1} \circ \cdots \circ f_1$, the log-likelihood decomposes as:
+\begin{equation}
+\log p_Y(y) = \log p_Z(z_0) - \sum_{k=1}^{K} \log \left| \det \frac{\partial f_k}{\partial z_{k-1}} \right|
+\end{equation}
+where $z_0 = f^{-1}(y)$ and $z_k = f_k(z_{k-1})$.
+
+Computing the determinant of a $D \times D$ Jacobian matrix naively requires $O(D^3)$ operations, making direct application of the change of variables formula intractable for high-dimensional data. \citep{dinh2016density}'s contribution is the architectural design of the RealNVP model, which yields triangular Jacobians to reduce determinant computation to $O(D)$.
+
+\subsubsection{Affine Coupling Layers}
+
+RealNVP \citep{dinh2016density} introduces \emph{affine coupling layers} that partition input dimensions and apply a tractable affine transformation. Given a $D$-dimensional input $z$, partition it into two parts: $z_{1:d}$ (first $d$ dimensions) and $z_{d+1:D}$ (remaining $D-d$ dimensions). The forward transformation is:
+\begin{align}
+y_{1:d} &= z_{1:d} \\
+y_{d+1:D} &= z_{d+1:D} \odot \exp(s(z_{1:d})) + t(z_{1:d})
+\end{align}
+where $s: \mathbb{R}^d \to \mathbb{R}^{D-d}$ and $t: \mathbb{R}^d \to \mathbb{R}^{D-d}$ are the \emph{scale} and \emph{translation} functions, typically parameterized by neural networks.
+
+The Jacobian of this transformation has a block-triangular structure:
+\begin{equation}
+\frac{\partial y}{\partial z} = \begin{pmatrix} I_d & 0 \\ \frac{\partial y_{d+1:D}}{\partial z_{1:d}} & \text{diag}(\exp(s(z_{1:d}))) \end{pmatrix}
+\end{equation}
+
+The determinant of a triangular matrix is the product of its diagonal elements, yielding:
+\begin{equation}
+\log \left| \det \frac{\partial y}{\partial z} \right| = \sum_{j=1}^{D-d} s_j(z_{1:d})
+\end{equation}
+This reduces Jacobian computation from $O(D^3)$ to $O(D)$, and critically, the functions $s(\cdot)$ and $t(\cdot)$ do not be invertible, as long as the overall coupling layer is.
+
+The inverse transformation is equally simple:
+\begin{align}
+z_{1:d} &= y_{1:d} \\
+z_{d+1:D} &= (y_{d+1:D} - t(y_{1:d})) \odot \exp(-s(y_{1:d}))
+\end{align}
+Both forward and inverse passes require only a single evaluation of $s$ and $t$, enabling efficient training and sampling.
+
+A single coupling layer leaves $d$ dimensions unchanged. To ensure all dimensions are transformed, RealNVP stacks multiple coupling layers with \emph{alternating binary masks}. For example, with mask patterns $[1,0,1,0,\ldots]$ and $[0,1,0,1,\ldots]$ alternating across layers, every dimension is eventually subject to a learned transformation.
+
+\subsubsection{Conditional Density Estimation}
+
+For statistical matching, we require the conditional density $p(y|x)$ rather than the marginal $p(y)$. RealNVP extends naturally to conditional estimation by making the scale and translation functions depend on conditioning variables $x$:
+\begin{align}
+s &= s_\theta(z_{1:d}, x) \\
+t &= t_\theta(z_{1:d}, x)
+\end{align}
+
+Given conditioning covariates $x$ (demographic and income covariates in our case) from the recipient survey, we sample $z \sim \mathcal{N}(0, I)$ and compute $y = f_\theta(z; x)$ in a single forward pass. This is critical for imputing millions of records. This, in combination with the neural network parameterization of $s$ and $t$, suggests a lot of potential in capturing complex, multimodal, and heteroskedastic conditional distributions between predictors and the target variable, in an efficient and computationally tractable way.
+
+\subsubsection{Objective Function}
+
+The training process maximizes the log-likelihood of observed data:
+\begin{equation}
+\mathcal{L}(\theta) = \frac{1}{N} \sum_{i=1}^{N} \log p_\theta(y_i | x_i) = \frac{1}{N} \sum_{i=1}^{N} \left[ \log p_Z(f_\theta^{-1}(y_i; x_i)) + \sum_{k=1}^{K} \sum_{j} s_j^{(k)}(z_{k-1,1:d}, x_i) \right]
+\end{equation}
+
+where we use the fact that $\log|\det J^{-1}| = -\log|\det J|$, and the base distribution is typically $p_Z(z) = \mathcal{N}(z; 0, I)$. 
+
+\subsubsection{Implementation Details}
+
+We use the \texttt{probaforms} library \citep{probaforms2023} implementation of RealNVP, which provides an interface for conditional density estimation on tabular data. The architecture consists of 8 coupling layers with alternating binary masks to ensure all input dimensions are transformed. Each scale and translation network is a fully-connected neural network with a single hidden layer of 10 neurons and tanh activation functions.
+
+For training, the model is fit on SCF data with the transformed net worth as the target variable and demographic/income covariates as conditioning features. We train for 500 epochs using the Adam optimizer with a learning rate of 0.01 and batch size of 32, optimizing the negative log-likelihood objective. After training, the imputation is done by passing CPS covariates through the learned conditional flow. For each CPS record, we sample from the standard Gaussian base distribution and apply the inverse transformation conditioned on that record's demographics, yielding a stochastic draw from the learned conditional distribution $p(\text{networth} \mid \text{covariates})$.
+
+\subsection{Mixture Density Network (MDN)}
+\label{sec:mdn}
+
+\subsubsection{Mathematical Foundation}
+
+Mixture Density Networks \citep{bishop1994mixture} were originally designed to address a fundamental limitation of standard neural network regression, the  prediction of only a single output value (typically the conditional mean) rather than the full conditional distribution. Bishop's innovation was to combine a conventional neural network with a Gaussian mixture model, allowing the network to output the parameters of a flexible probability distribution rather than a point estimate.
+
+The conditional distribution $p(y|x)$ is modeled as a mixture of $K$ Gaussian components:
+\begin{equation}
+p(y|x) = \sum_{k=1}^{K} \pi_k(x) \cdot \mathcal{N}(y; \mu_k(x), \sigma_k^2(x))
+\end{equation}
+
+where each component $k$ has three parameters that depend on the input $x$:
+\begin{itemize}
+\item $\pi_k(x)$: the mixing coefficient (probability of component $k$)
+\item $\mu_k(x)$: the component mean
+\item $\sigma_k(x)$: the component standard deviation
+\end{itemize}
+
+A neural network processes the input covariates $x$ and produces $3K$ outputs that parameterize the mixture. The theoretical justification is that any continuous probability density can be approximated to arbitrary accuracy by a mixture of Gaussians with sufficiently many components. This flexibility is particularly valuable for wealth imputation, where the conditional distribution given demographics may be multimodal (e.g., homeowners vs.\ renters with similar incomes) or exhibit heavy tails. To sample from the learned distribution, one first selects a component $k$ according to the mixing probabilities $\pi_k(x)$, then draws from the corresponding Gaussian $\mathcal{N}(\mu_k(x), \sigma_k^2(x))$. This two-stage procedure naturally captures multimodality: different draws may come from different mixture components, reflecting genuine uncertainty about which ``mode'' of the wealth distribution applies to a given demographic profile.
+
+However, the mixture parameters must satisfy certain constraints. Mixing coefficients must be positive and sum to one, and variances must be strictly positive. These are enforced through output activations:
+\begin{align}
+\pi_k(x) &= \frac{\exp(z_k^\pi)}{\sum_{j=1}^K \exp(z_j^\pi)} \quad \text{(softmax)} \\
+\mu_k(x) &= z_k^\mu \quad \text{(unconstrained)} \\
+\sigma_k(x) &= \exp(z_k^\sigma) \quad \text{(exponential, ensures positivity)}
+\end{align}
+where $z^\pi$, $z^\mu$, and $z^\sigma$ are the raw network outputs. Bishop noted that the exponential activation for variances has the same effect as assuming an uninformative prior and prevents pathological configurations where variances collapse to zero.
+
+\subsubsection{Objective Function}
+
+The network is trained by maximizing the log-likelihood of the observed data under the mixture model:
+\begin{equation}
+\mathcal{L}(\theta) = -\frac{1}{N}\sum_{i=1}^{N} \log \left( \sum_{k=1}^{K} \pi_k(x_i; \theta) \cdot \mathcal{N}(y_i; \mu_k(x_i; \theta), \sigma_k^2(x_i; \theta)) \right)
+\end{equation}
+
+This loss is differentiable with respect to all network parameters $\theta$, enabling training via backpropagation. Computing $\log \sum_k \exp(a_k)$ directly can cause numerical overflow when any $a_k$ is large. To avoid this, MDN uses the identity $\log \sum_k \exp(a_k) = m + \log \sum_k \exp(a_k - m)$ where $m = \max_k a_k$. By subtracting the maximum, the largest term becomes $\exp(0) = 1$ and all others are bounded by 1, preventing overflow while preserving the exact result.
+
+\subsubsection{Implementation Details}
+
+We use the \texttt{pytorch\_tabular} library \citep{joseph2021pytorch}, which provides a modular architecture separating the backbone neural network from the MDN head. The backbone is a CategoryEmbedding model with three hidden layers of sizes 128, 64, and 32 neurons respectively, using ReLU activations. A MixtureDensityHead layer then takes the backbone output and produces the $3K$ mixture parameters, for the $K=5$ Gaussian components in our model. The network learns to predict both the conditional mean and a covariate-dependent variance, nonetheless, increasing this value could provide additional flexibility to capture more multimodal distributions, making tunning this value an important step in ensuring the method is appropirately adapted to the data.
+
+For training, the model is fit on SCF data with transformed net worth as the target and demographic/income covariates as inputs. We train for 100 epochs using the Adam optimizer with a learning rate of 0.001 and batch size of 256. After training, imputation is done by passing each CPS record through the network to obtain mixture parameters, sampling from the resulting distribution, and applying the inverse transformation to recover net worth in original units.
+
+\subsection{TabSyn (VAE + Diffusion)}
+\label{sec:tabsyn}
+
+\subsubsection{Mathematical Foundation}
+
+\citep{zhang2023mixed} developed TabSyn to address the challenge that heterogeneous tabular data (containing both numerical and categorical columns) pose to its synthesis and operalization. Rather than applying diffusion directly in data space (which struggles with mixed types), TabSyn operates in a learned latent space where all column types are represented uniformly.
+
+The model consists of two stages: a Variational Autoencoder that learns a unified latent representation for mixed-type tabular data, and a score-based diffusion model that learns to generate samples in this latent space. Each row $x = (x^{\text{num}}, x^{\text{cat}})$ is mapped to a latent embedding $z$ via a column-wise tokenizer and transformer encoder. The diffusion process then operates on these embeddings.
+
+TabSyn uses a tokenizer that converts each column into a fixed-dimensional token. For numerical columns, the tokenizer applies a learned linear projection:
+\begin{equation}
+t_j^{\text{num}} = w_j \cdot x_j^{\text{num}} + b_j, \quad w_j, b_j \in \mathbb{R}^{d_{\text{token}}}
+\end{equation}
+For categorical columns, an embedding table maps each category to a dense vector:
+\begin{equation}
+t_j^{\text{cat}} = \text{Embed}(x_j^{\text{cat}}) \in \mathbb{R}^{d_{\text{token}}}
+\end{equation}
+Following the BERT convention \citep{devlin2019bert}, a learnable [CLS] token is added at the beginning of the sequence. This is a special embedding vector (initialized randomly and updated during training) that attends to all column tokens and learns to summarize the entire row into a single representation.
+
+The Variational Autoencoder uses transformer layers, where each layer computes weighted combinations of all tokens, allowing each column's representation to incorporate information from every other column. This enables the model to learn inter-column dependencies. Given tokenized input $T = [t_{\text{CLS}}, t_1, \ldots, t_D]$, the encoder produces latent parameters:
+\begin{align}
+\mu_z &= \text{Encoder}_\mu(T) \\
+\log \sigma_z^2 &= \text{Encoder}_\sigma(T)
+\end{align}
+The latent representation is sampled via the reparameterization trick: $z = \mu_z + \sigma_z \odot \epsilon$, where $\epsilon \sim \mathcal{N}(0, I)$. The decoder transformer reconstructs the token sequence, and a ``detokenizer'' maps tokens back to numerical values and categorical logits.
+
+The VAE's training objective function maximizes the Evidence Lower Bound (ELBO):
+\begin{equation}
+\mathcal{L}_{\text{VAE}} = \mathbb{E}_{q_\phi(z|x)}\left[\log p_\theta(x|z)\right] - \beta \cdot D_{\text{KL}}\left(q_\phi(z|x) \| p(z)\right)
+\end{equation}
+where the reconstruction term combines MSE loss for numerical columns and cross-entropy loss for categorical columns:
+\begin{equation}
+\log p_\theta(x|z) = \sum_{j \in \text{num}} -\|x_j - \hat{x}_j\|^2 + \sum_{j \in \text{cat}} \log p(\hat{x}_j = x_j)
+\end{equation}
+
+After VAE training, the encoder maps all training data to latent space, producing embeddings $\{z_i\}_{i=1}^N$. A score-based diffusion model learns this latent distribution using the EDM (Elucidating Diffusion Models) framework. The forward process adds Gaussian noise at continuous noise levels $\sigma$:
+\begin{equation}
+z_\sigma = z_0 + \sigma \cdot \epsilon, \quad \epsilon \sim \mathcal{N}(0, I)
+\end{equation}
+
+The denoising network $D_\theta(z_\sigma, \sigma)$ is a Multi-Layer Perceptron, a feedforward neural network of stacked fully-connected layers with SiLU activations and hidden dimension 1024. It is trained to predict the clean data from noisy observations:
+\begin{equation}
+\mathcal{L}_{\text{diffusion}} = \mathbb{E}_{z_0, \sigma, \epsilon}\left[\lambda(\sigma) \|D_\theta(z_0 + \sigma\epsilon, \sigma) - z_0\|^2\right]
+\end{equation}
+where $\lambda(\sigma)$ is a weighting function. The noise level $\sigma$ is encoded via positional embeddings and injected into the network, making the denoising behavior adapt to how corrupted the input is.
+
+\subsubsection{Adaptation for Statistical Matching}
+
+The original TabSyn was designed for unconditional data synthesis, with applications in synthetic data generationa and missing value imputation. All applications involved generating new samples from the same donor distribution with the models trained. However, statistical matching imputation, requires conditional generation given the observed predictors $x^{\text{obs}}$ from the receiver CPS dataset.
+
+Thus, we developed a custom imputation pipeline that adapts TabSyn for cross-dataset imputation through the following modifications:
+
+\paragraph{Cross-Dataset Preprocessing.}
+A critical challenge is that the donor (SCF) and receiver (CPS) datasets must be normalized consistently. We implemented a \texttt{CrossDatasetPreprocessor} that fits quantile transformers on SCF data to normalize numerical columns to standard Gaussian and label encoders on SCF categorical columns, applying these same transformations to the CPS data, ensuring both datasets occupy the same normalized space.
+
+\paragraph{Masked Diffusion for Conditional Generation.}
+To condition on observed variables during the reverse diffusion process, we employ a masking strategy. Let $z = [z^{\text{obs}}, z^{\text{target}}]$ partition the latent embedding into observed and target components. At each denoising step $t$:
+\begin{enumerate}
+\item Encode the observed CPS covariates to obtain $z^{\text{obs}}_{\text{cps}}$
+\item Run one denoising step on the full latent: $\tilde{z}_{t-1} = \text{denoise}(z_t, t)$
+\item Replace observed components with noised versions of the true values: $z_{t-1} = z^{\text{obs}}_{\text{cps}} + \sigma_{t-1}\epsilon$ for observed dimensions
+\item Keep diffusion-generated values for target dimensions: $z_{t-1}^{\text{target}} = \tilde{z}_{t-1}^{\text{target}}$
+\end{enumerate}
+
+This ensures the generated target is consistent with the observed covariates while being drawn from the learned conditional distribution.
+
+\paragraph{Imputation Algorithm.}
+The full imputation procedure is summarized in Algorithm~\ref{alg:tabsyn_impute}.
+
+\begin{algorithm}[h]
+\caption{TabSyn Cross-Dataset Imputation}
+\label{alg:tabsyn_impute}
+\begin{algorithmic}[1]
+\Require Trained VAE encoder $E_\phi$, decoder $D_\theta$, diffusion model $\mathcal{D}$
+\Require CPS covariates $X^{\text{cps}}$, number of diffusion steps $T$, trials $M$
+\Ensure Imputed target values $\hat{y}^{\text{cps}}$
+\State \textbf{Preprocess:} Normalize $X^{\text{cps}}$ using SCF-fitted transformers
+\State \textbf{Initialize target:} Sample $y^{\text{init}} \sim \mathcal{N}(\mu_{\text{scf}}, \sigma_{\text{scf}}^2)$ from SCF target statistics
+\State \textbf{Encode:} $z_0 \gets E_\phi(X^{\text{cps}}, y^{\text{init}})$ \Comment{Encode with placeholder target}
+\State \textbf{Compute mask:} $m \gets$ binary mask with 1s for target token positions
+\State \textbf{Initialize:} $z_T \sim \mathcal{N}(0, \sigma_{\max}^2 I)$
+\For{$t = T, T-1, \ldots, 1$}
+    \State $\tilde{z}_{t-1} \gets \mathcal{D}.\text{step}(z_t, t)$ \Comment{Denoise full latent}
+    \State $z^{\text{obs}}_{t-1} \gets z_0^{\text{obs}} + \sigma_{t-1} \cdot \epsilon$ \Comment{Noised observed encoding}
+    \State $z_{t-1} \gets (1-m) \odot z^{\text{obs}}_{t-1} + m \odot \tilde{z}_{t-1}$ \Comment{Mask replacement}
+\EndFor
+\State \textbf{Decode:} $(\hat{x}^{\text{num}}, \hat{x}^{\text{cat}}) \gets D_\theta(z_0)$
+\State \textbf{Extract target:} $\hat{y} \gets \hat{x}^{\text{num}}[\text{target\_idx}]$
+\State \textbf{Inverse transform:} Apply SCF quantile inverse to recover original scale
+\State \Return $\hat{y}$
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Implementation Details}
+
+We use the official TabSyn codebase from \citet{zhang2023mixed} with our custom extensions for cross-dataset imputation. The architecture hyperparameters follow the original paper:
+
+\begin{itemize}
+\item \textbf{VAE:} 2 transformer layers, token dimension $d_{\text{token}} = 4$, 1 attention head, hidden factor 32
+\item \textbf{Diffusion:} MLP with hidden dimension 1024, SiLU activations, positional time embeddings
+\item \textbf{Training:} VAE trained for 2000 epochs, diffusion model for 10000 epochs
+\item \textbf{Sampling:} 50 diffusion steps with EDM noise schedule ($\sigma_{\min} = 0.002$, $\sigma_{\max} = 80$)
+\end{itemize}
+
+For imputation, we run 30 independent trials and average the results to reduce variance. Each CPS record is processed in batches of 2048 for computational efficiency. The target variable is initialized with random samples from the SCF target distribution (weighted by survey weights) rather than zeros, which improves convergence.
+
+\subsection{Baseline: Quantile Random Forest}
+\label{sec:qrf}
+
+Quantile Random Forests (QRF) \citep{meinshausen2006quantile} extend the standard Random Forest algorithm to estimate conditional quantiles rather than conditional means. While a traditional Random Forest averages the response values in each leaf node to predict $\mathbb{E}[Y \mid X]$, QRF retains the full distribution of training observations in each leaf, enabling estimation of any quantile $Q_\tau(Y \mid X)$.
+
+\subsubsection{Mathematical Foundation}
+For a new observation $\mathbf{x}$, QRF estimates the conditional distribution function as:
+\begin{equation}
+\hat{F}(y \mid \mathbf{x}) = \sum_{i=1}^{n} w_i(\mathbf{x}) \cdot \mathbf{1}_{Y_i \leq y}
+\end{equation}
+where the weights $w_i(\mathbf{x})$ reflect how often training observation $i$ falls in the same leaf as $\mathbf{x}$ across all trees in the forest. The $\tau$-th conditional quantile is then:
+\begin{equation}
+\hat{Q}_\tau(Y \mid \mathbf{x}) = \inf \left\{ y : \hat{F}(y \mid \mathbf{x}) \geq \tau \right\}
+\end{equation}
+
+\subsubsection{Implementation Details}
+
+We use the QRF implementation from the \texttt{microimpute} library \citep{microimpute2025}, which wraps the \texttt{quantile-forest} package with a scikit-learn-compatible interface. The model uses default hyperparameters: 100 trees, unlimited depth, minimum 1 sample per leaf, and $\sqrt{p}$ features considered at each split. For imputation, the model first computes quantile predictions across a fine grid, then samples a random quantile from a Beta distribution centered on the conditional median, and returns the corresponding predicted value. This stochastic sampling ensures that imputations reflect the full conditional distribution rather than collapsing to a point estimate.
+
+Such implementation has demonstrated that QRF is well-suited for wealth imputation as it naturally captures the entire conditional distribution between predictors and wealth, preserving heteroskedasticity and skewness while being robust to outliers, which are prevalent in wealth data. Prior work by \citet{juaristi2025microimpute} established QRF as the best-performing traditional method for SCF-to-CPS wealth imputation, making it the baseline against which to evaluate deep learning alternatives.

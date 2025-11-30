@@ -1,0 +1,83 @@
+\section{Data}
+\label{sec:data}
+
+% Addresses instructions.md sections 1-4
+
+\subsection{Data Sources}
+
+This project addresses a fundamental challenge in economic and social science research more broadly. Many important analyses require detailed information at the household level, yet such data are often unavailable in large, representative surveys, instead being scattered across multiple specialized datasets with limited sample sizes. For example, in the United States, comprehensive wealth data exists only in specialized surveys that focus on wealthy households, while larger labor force surveys lack wealth measures entirely. Thus, this research explores deep learning techniques to impute net worth from the Survey of Consumer Finances (SCF) onto the Current Population Survey (CPS), comparing them to more traditional methods, to enable distributional analyses that require both detailed wealth information and large, representative samples.
+
+\subsubsection{Survey of Consumer Finances (SCF)}
+
+The Survey of Consumer Finances (SCF) is a triennial cross-sectional survey of U.S. families conducted by the Board of Governors of the Federal Reserve System \citep{bricker2017changes}. The SCF is the primary source of detailed household wealth data in the United States, providing comprehensive information on families' balance sheets, pensions, income, and demographic characteristics.
+
+The SCF employs a dual-frame sample design to address the highly skewed distribution of wealth. The first component is an area-probability sample providing broad population coverage. The second is a list sample developed from statistical records derived from tax returns under an agreement with the Statistics of Income (SOI) division of the IRS, which oversamples wealthy households to improve precision at the upper tail of the wealth distribution. The 2022 survey interviewed 4,595 families.
+
+The SCF collects detailed information on all household assets and liabilities. Assets include primary residence, other real estate, businesses, vehicles, financial assets (checking, savings, money market accounts, CDs, bonds, stocks, mutual funds, retirement accounts, life insurance, and other managed assets), while liabilities capture mortgages, home equity loans, vehicle loans, education loans, credit card balances, and other consumer debt. Net worth is computed as total assets minus total liabilities.
+
+With the 4,595 families interviewed, the SCF creates five separate imputation replicates (implicates), resulting in 22,975 records in the public dataset. Each implicate contains different imputed values for missing data, allowing analysts to account for imputation uncertainty. This public dataset, with its latest version published for the year 2022, is the basis for our modeling efforts, employed as the donor dataset of net worth values.
+
+\subsubsection{Current Population Survey (CPS)}
+
+The Current Population Survey (CPS) is a monthly survey of approximately 60,000 U.S. households conducted jointly by the U.S. Census Bureau and the Bureau of Labor Statistics (BLS). It serves as the primary source of labor force statistics for the United States, producing the monthly unemployment rate and employment figures \citep{cps2023}.
+
+The CPS uses a multistage probability-based sample designed to represent the civilian non-institutional population of each state and the nation as a whole. Households follow a 4-8-4 rotation pattern: interviewed for 4 consecutive months, out of sample for 8 months, then interviewed for 4 more months before permanent retirement from the sample. On average, each person in the CPS sample represents approximately 2,500 people in the population.
+
+The CPS collects extensive information on population demographics (age, sex, race, ethnicity, education, marital status, household composition), labor force status (employment, unemployment, hours worked, occupation, industry, class of worker), and income (via Annual Social and Economic Supplement), collecting information on earnings, unemployment compensation, Social Security, pension income, interest, dividends, and other income sources.
+
+Despite its comprehensive coverage of income and employment, the CPS does not collect information on household wealth, assets, or liabilities. This omission motivates the need for full variable imputation, making the CPS the receiver dataset. By imputing net worth from the SCF onto the CPS, researchers can analyze wealth distributions in a sample roughly 13 times larger than the SCF alone, enabling finer demographic disaggregations and more precise subgroup analyses, that can then inform policy and economic analyses.
+
+\subsection{Variable Selection}
+
+The imputation of a variable from a donor survey onto a receiver one relies on predictor variables, which must be measured in both datasets: the SCF and CPS. The imputation process will be more succesfull the more predictive of the imputed variable that predictors are. Thus, we select demographic characteristics and income sources that are common to both surveys as predictors of net worth. Table~\ref{tab:predictors} summarizes the predictor set.
+
+\begin{table}[H]
+\centering
+\caption{Predictor Variables Used in Imputation Models}
+\label{tab:predictors}
+\begin{tabular}{lll}
+\toprule
+Variable & Type & Description \\
+\midrule
+age & Numerical & Age of household head \\
+employment\_income & Numerical & Annual employment income \\
+interest\_dividend\_income & Numerical & Income from investments \\
+pension\_income & Numerical & Pension and retirement income \\
+is\_female & Categorical & Gender of household head \\
+race & Categorical & Race/ethnicity (multiple categories) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The target variable is household net worth, defined as total assets minus total liabilities. Net worth presents modeling challenges due to its highly skewed distribution and the presence of negative values (households with debt exceeding assets). To address these issues, we apply the inverse hyperbolic sine (asinh) transformation:
+\begin{equation}
+\tilde{y} = \sinh^{-1}(y) = \log\left(y + \sqrt{y^2 + 1}\right)
+\end{equation}
+The asinh transformation behaves similarly to the natural logarithm for large positive values ($\sinh^{-1}(y) \approx \log(2y)$ for $y \gg 1$), compressing the heavy right tail of the wealth distribution, while remaining well-defined for negative values and zero. Unlike the log transformation, asinh does not require arbitrary treatment of non-positive observations. All models are trained on transformed net worth, and predictions are back-transformed via $y = \sinh(\tilde{y})$ for final evaluation and interpretation.
+
+\subsection{Data Preprocessing}
+
+Preparing the SCF and CPS for imputation involved two stages. This project leveraged existing preprocessing pipelines to extract relevant variables from the raw CPS file; and only then, harmonized variable definitions across the two surveys to ensure comparability.
+
+We use the CPS dataset preprocessed by PolicyEngine's \texttt{policyengine-us-data} package \citep{policyengine_us_data2025}, which builds on the 2023 Census Bureau's Annual Social and Economic Supplement (ASEC) microdata as the base receiver dataset. PolicyEngine's pipeline aggregates person-level income variables to the household level, constructs composite income measures (combining taxable and tax-exempt interest, qualified and non-qualified dividends, and multiple pension sources), creates household identifiers, and extracts household head demographics. The final dataset is subsampled to retain approximately 20,000 household-level observations with income and demographic variables, discarding person-level detail and variables irrelevant to wealth imputation.
+
+The loaded SCF and CPS (downloaded from the Federal Reserve System, and PolicyEngine's public database, respectively), in addition to containing data one year apart, use different variable definitions and encoding, requiring preprocessing to align them before imputation. The main harmonization steps taken are:
+\begin{itemize}
+    \item \textbf{Race recoding}: The CPS uses 26 race categories (including multiracial combinations), while the SCF uses 5. We map CPS codes to SCF categories: White (1), Black (2), Hispanic (3), Asian (4), and Other (5), with multiracial combinations assigned to the most appropriate category.
+    \item \textbf{Gender recoding}: The SCF codes gender as 1=male, 2=female. We recode to a binary indicator (0=male, 1=female) matching CPS conventions.
+    \item \textbf{Income aggregation}: We construct composite variables in the CPS: \texttt{interest\_dividend\_income} combines taxable interest, tax-exempt interest, and dividend income; \texttt{pension\_income} combines private pensions and Social Security retirement benefits, to match SCF definitions.
+    \item \textbf{Household head selection}: Both datasets are filtered to store records of household heads only, ensuring comparable units of analysis.
+\end{itemize}
+The variables in both datasets are renamed to a common schema, and both datasets are filtered to retain only the predictor and target variables listed in Table~\ref{tab:predictors}, in addition to survey weights.
+
+Both surveys contain sampling weights to ensure population representativeness (providing each observation with a weight that reflects its representation in the overall population). The SCF oversamples wealthy households, which makes weights essential for unbiased distributional estimates. We incorporate weights in two ways for distributional accuracy evaluation.  We employ weighted Wasserstein distances to compare imputed CPS distributions against the weighted SCF donor dataset, and use weighted resampling to visualize original and imputed net worth distributions, comparing their shapes once population representativeness is accounted for.
+
+Importantly, different models require different representations of categorical variables, including different preprocessing steps. RealNVP and MDN operate on continuous feature spaces and require one-hot encoding of categorical variables (gender, race), expanding the feature dimension. TabSyn, is designed for mixed-type tabular data, and thus accepts categorical variables in their original integer-coded form and learns embeddings internally. Additionally, numerical predictors are standardized (zero mean, unit variance) using statistics computed on the SCF training data.
+
+\subsection{Exploratory Data Analysis}
+
+The exploratory data analysis conducted confirms that the SCF and CPS exhibit broadly similar predictor distributions, supporting the validity of full variable imputation. Race distributions show the largest discrepancy, as the CPS contains a higher proportion of White households (77\% vs.\ 63\%) and substantially fewer Hispanic households (0.1\% vs.\ 13\%), which could be expected due to different race categorizations. Employment income distributions are comparable across surveys, though the SCF captures more high-income outliers (extending to \$10M+ compared to \$1M in the CPS), consistent with its oversampling of wealthy households. Moreover, the importance of survey weights is evident in the SCF's net worth distribution and descriptive statistics. The unweighted sample median of \$384,500 drops to \$196,800 when properly weighted, demonstrating that the raw sample overrepresents wealthy households and that weights are essential for population-representative inference. Refer to the code appendix for detailed EDA visualizations and statistics.
+
+\subsection{Train-Test Split Strategy}
+
+In addition to the data preprocessing and model-specific encoding, the data also requires a train-test split strategy to address the fundamental challenge that imputation presents. The CPS lacks ground-truth net worth values (as these are inherently unkown), making direct validation on the receiver dataset impossible. We address this through 3-fold cross-validation on the SCF donor data. In each fold, models are trained on two-thirds of SCF households and evaluated by imputing net worth on held-out third, comparing it to the true, known net worth. This approach measures each model's ability to learn the conditional distribution $P(\text{net worth} \mid X)$ from training data (where $X$ is the set of predictors) and generalize to unseen households with similar predictor profiles. The underlying assumption is that model performance on held-out SCF data provides a reasonable proxy for performance when imputing onto CPS households. This assumption is valid to the extent that the predictor distributions overlap between surveys, which was mostly confirmed by the EDA. Nonetheless, final imputation uses models trained on the full SCF dataset.

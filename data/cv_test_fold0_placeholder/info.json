@@ -1,0 +1,89 @@
+{
+    "name": "cv_test_fold0",
+    "task_type": "regression",
+    "num_col_idx": [
+        0,
+        1,
+        2,
+        3
+    ],
+    "cat_col_idx": [
+        4,
+        5
+    ],
+    "target_col_idx": [
+        6
+    ],
+    "column_names": [
+        "age",
+        "employment_income",
+        "interest_dividend_income",
+        "pension_income",
+        "is_female",
+        "race",
+        "transformed_networth",
+        "wgt"
+    ],
+    "data_path": "tabsyn/data/cv_test_fold0.csv",
+    "file_type": "csv",
+    "header": "infer",
+    "column_info": {
+        "0": {
+            "type": "numerical",
+            "max": 90.0,
+            "min": 19.0,
+            "mean": 53.615,
+            "std": 14.134221433770136
+        },
+        "1": {
+            "type": "numerical",
+            "max": 1080911.8236472947,
+            "min": 0.0,
+            "mean": 93577.50908066132,
+            "std": 161372.78215451242
+        },
+        "2": {
+            "type": "numerical",
+            "max": 2810370.741482966,
+            "min": 0.0,
+            "mean": 63273.95694514028,
+            "std": 283515.11036402296
+        },
+        "3": {
+            "type": "numerical",
+            "max": 145382.6402805611,
+            "min": 0.0,
+            "mean": 12608.83642284569,
+            "std": 28220.5243400484
+        },
+        "4": {
+            "type": "categorical",
+            "categories": [
+                "0",
+                "1"
+            ],
+            "n_categories": 2
+        },
+        "5": {
+            "type": "categorical",
+            "categories": [
+                "1",
+                "2",
+                "3",
+                "4",
+                "5"
+            ],
+            "n_categories": 5
+        },
+        "6": {
+            "type": "numerical",
+            "max": 19.977899881242102,
+            "min": -12.716438163472716,
+            "mean": 11.953559676157713,
+            "std": 6.62886467512307
+        }
+    },
+    "train_num": 400,
+    "test_num": 400,
+    "preprocessor_path": "data/cv_test_fold0_preprocessor.pkl"
+}

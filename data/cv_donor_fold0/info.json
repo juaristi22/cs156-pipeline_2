@@ -1,0 +1,89 @@
+{
+    "name": "cv_donor_fold0",
+    "task_type": "regression",
+    "num_col_idx": [
+        0,
+        1,
+        2,
+        3
+    ],
+    "cat_col_idx": [
+        4,
+        5
+    ],
+    "target_col_idx": [
+        6
+    ],
+    "column_names": [
+        "age",
+        "employment_income",
+        "interest_dividend_income",
+        "pension_income",
+        "is_female",
+        "race",
+        "transformed_networth",
+        "wgt"
+    ],
+    "data_path": "tabsyn/data/cv_donor_fold0.csv",
+    "file_type": "csv",
+    "header": "infer",
+    "column_info": {
+        "0": {
+            "type": "numerical",
+            "max": 95.0,
+            "min": 18.0,
+            "mean": 54.567772264298775,
+            "std": 16.182530195811122
+        },
+        "1": {
+            "type": "numerical",
+            "max": 30135821.64328657,
+            "min": -1.0809118236472943,
+            "mean": 181011.06277806003,
+            "std": 993582.6492430466
+        },
+        "2": {
+            "type": "numerical",
+            "max": 109031575.6513026,
+            "min": 0.0,
+            "mean": 267969.72927050234,
+            "std": 2863168.390663472
+        },
+        "3": {
+            "type": "numerical",
+            "max": 3335693.887775551,
+            "min": 0.0,
+            "mean": 26129.757971888543,
+            "std": 108431.22952065914
+        },
+        "4": {
+            "type": "categorical",
+            "categories": [
+                "0",
+                "1"
+            ],
+            "n_categories": 2
+        },
+        "5": {
+            "type": "categorical",
+            "categories": [
+                "1",
+                "2",
+                "3",
+                "4",
+                "5"
+            ],
+            "n_categories": 5
+        },
+        "6": {
+            "type": "numerical",
+            "max": 20.421628169937577,
+            "min": -13.547552678361932,
+            "mean": 11.06144821607028,
+            "std": 6.356056759988542
+        }
+    },
+    "train_num": 15316,
+    "test_num": 7659,
+    "preprocessor_path": "data/cv_donor_fold0_preprocessor.pkl"
+}

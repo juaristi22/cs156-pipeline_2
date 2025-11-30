@@ -1,0 +1,89 @@
+{
+    "name": "scf_2022",
+    "task_type": "regression",
+    "num_col_idx": [
+        1,
+        3,
+        4,
+        5
+    ],
+    "cat_col_idx": [
+        0,
+        2
+    ],
+    "target_col_idx": [
+        6
+    ],
+    "column_names": [
+        "is_female",
+        "age",
+        "race",
+        "employment_income",
+        "interest_dividend_income",
+        "pension_income",
+        "transformed_networth",
+        "wgt"
+    ],
+    "data_path": "tabsyn/data/scf_2022.csv",
+    "file_type": "csv",
+    "header": "infer",
+    "column_info": {
+        "1": {
+            "type": "numerical",
+            "max": 95.0,
+            "min": 18.0,
+            "mean": 54.4689880304679,
+            "std": 16.189080994005618
+        },
+        "3": {
+            "type": "numerical",
+            "max": 30135821.643286575,
+            "min": -1.0809118236472945,
+            "mean": 176578.83901044744,
+            "std": 905720.5125410021
+        },
+        "4": {
+            "type": "numerical",
+            "max": 109031575.6513026,
+            "min": 0.0,
+            "mean": 262772.6579486503,
+            "std": 2918160.6006655996
+        },
+        "5": {
+            "type": "numerical",
+            "max": 3335693.887775551,
+            "min": 0.0,
+            "mean": 25474.820474736196,
+            "std": 104388.43197213337
+        },
+        "0": {
+            "type": "categorical",
+            "categories": [
+                "0",
+                "1"
+            ],
+            "n_categories": 2
+        },
+        "2": {
+            "type": "categorical",
+            "categories": [
+                "1",
+                "2",
+                "3",
+                "4",
+                "5"
+            ],
+            "n_categories": 5
+        },
+        "6": {
+            "type": "numerical",
+            "max": 20.421628169937577,
+            "min": -13.658856747920264,
+            "mean": 11.033993123393826,
+            "std": 6.391655095642863
+        }
+    },
+    "train_num": 22975,
+    "test_num": 20655,
+    "preprocessor_path": "data/scf_2022_preprocessor.pkl"
+}
