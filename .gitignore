@@ -32,10 +32,15 @@ code.pdf
 .vscode/
 *.swp
 
-# Model checkpoints
+# Model checkpoints and training logs
 *.pt
 *.pth
 *.ckpt
+lightning_logs/
+.pt_tmp/
+wandb/
+runs/
+tensorboard/
 
 # LaTeX auxiliary files
 *.aux
