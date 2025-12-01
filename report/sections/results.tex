@@ -3,6 +3,14 @@
 
 % Addresses instructions.md sections 6-8
 
+\subsection{Implementation Procedure}
+
+To evaluate model performance before final imputation, we employ 3-fold cross-validation on the preprocessed SCF dataset. This approach assesses how well each model generalizes to unseen data by using the donor survey where ground-truth net worth values are available. Nonetheless, it is important to consider that the use of cross-validation loss as a metric strongly relies on assumption that the CPS population does not differ systematically from the SCF population in ways not captured by the shared covariates.
+
+For the procedure, the SCF dataset is randomly partitioned into three subsets of approximately equal size. The number of folds was selected hoping to provide enough measure for variability in performance while keeping computational constraints in mind. For each fold, the model is trained on the union of the other two folds (approximately 15,300 observations). Then, predictions are generated for the held-out fold (approximately 7,650 observations), and quantile loss is computed at each quantile level by comparing predictions to true net worth values. For each quantile level $\tau$, we report the mean and standard deviation of quantile loss across the three folds. The standard deviation provides insight into the stability of each model's performance, with high variance indicating sensitivity to the particular training sample or overfitting.
+
+After cross-validation, each model was trained on the full SCF dataset and used to impute net worth onto the CPS. Given the computational requirements of training each deep learning method, and the relative miniscule time required to impute once they are trained, the model saving mechanisms were implemented to avoid unnecessary computational costs. This enables reusing the same network weights for future imputations without retraining, as long as the donor dataset and preprocessing are consistent across runs. The imputed CPS distributions were also saved for subsequent analysis and benchmarking evaluation.
+
 \subsection{Evaluation Metrics}
 \label{sec:metrics}
 
@@ -16,7 +24,7 @@ Quantile loss, introduced by \citet{koenker1978regression}, measures how well a 
 \end{equation}
 where $\rho_\tau(u) = u(\tau - \mathbf{1}_{u < 0})$ is the pinball loss. This asymmetric loss penalizes over-predictions and under-predictions differently depending on $\tau$. For example, for a high quantile like $\tau = 0.9$, under-predictions are penalized 9 times more heavily than over-predictions.
 
-We evaluate at five quantile levels ($\tau \in \{0.1, 0.25, 0.5, 0.75, 0.9\}$) to assess performance across the entire conditional distribution. A model that accurately captures the full distribution should achieve low quantile loss at all levels, not just the median.
+We evaluate at different quantile levels ($\tau \in \{0.25, 0.5, 0.75\}$) to assess performance across the entire conditional distribution. A model that accurately captures the full distribution should achieve low quantile loss at all levels, not just the median.
 
 \subsubsection{Wasserstein Distance}
 
@@ -42,12 +50,6 @@ where $F_n$ and $G_m$ are the empirical CDFs of the donor (SCF) and imputed (CPS
 
 Unlike the Wasserstein distance, which measures the total ``work'' required to transform one distribution into another and is sensitive to the magnitude of differences in absolute terms, the KS statistic is bounded between 0 and 1 and captures the maximum pointwise discrepancy between CDFs. This makes the KS statistic particularly useful for detecting differences in distributional shape without being dominated by extreme values. For heavy-tailed distributions like wealth, where outliers can disproportionately influence the Wasserstein distance, the KS statistic offers a more balanced assessment of how well the overall distributional form is preserved.
 
-\subsection{Cross-Validation Procedure}
-
-To evaluate model performance before final imputation, we employ 3-fold cross-validation on the SCF dataset. This approach assesses how well each model generalizes to unseen data by using the donor survey where ground-truth net worth values are available. Nonetheless, it is important to consider that the use of cross-validation loss as a metric strongly relies on assumption that the CPS population does not differ systematically from the SCF population in ways not captured by the shared covariates.
-
-For the procedure, the SCF dataset is randomly partitioned into three disjoint subsets of approximately equal size. The number of folds was selected hoping to provide enough measure for variability in performance while keeping computational constraints in mind. For each fold, the model is trained on the union of the other two folds (approximately 15,300 observations). Then, predictions are generated for the held-out fold (approximately 7,650 observations), and quantile loss is computed at each quantile level by comparing predictions to true net worth values. For each quantile level $\tau$, we report the mean and standard deviation of quantile loss across the three folds. The standard deviation provides insight into the stability of each model's performance, with high variance indicating sensitivity to the particular training sample or overfitting.
-
 \subsection{Cross-Validation Results}
 
 Table~\ref{tab:cv_results} presents the 3-fold cross-validation results for all models. Results are reported as mean $\pm$ standard deviation across folds, with lower values indicating better performance.
@@ -70,15 +72,13 @@ TabSyn & $3.49 \pm 0.02$ & $6.23 \pm 0.06$ & $8.98 \pm 0.10$ \\
 
 The Quantile Random Forest baseline achieves consistent performance across all quantile levels, with low variance across folds (standard deviations between 0.01 and 0.05). This stability reflects the robustness of tree-based ensemble methods to different training samples. The QRF's quantile loss values are moderate, providing a reasonable benchmark against which to evaluate the deep learning approaches.
 
-The Mixture Density Network achieves the best cross-validation performance across all quantile levels, with losses approximately 15--20\% lower than the QRF baseline. The MDN's consistent performance across $\mathcal{L}_{0.25}$, $\mathcal{L}_{0.50}$, and $\mathcal{L}_{0.75}$ suggests that the Gaussian mixture parameterization effectively captures the conditional distribution of net worth given the predictor variables. The relatively low standard deviations indicate stable performance across folds.
+However, it is the Mixture Density Network that achieves the best cross-validation performance, with losses approximately 15--20\% lower than the QRF baseline. The MDN's consistent performance across $\mathcal{L}_{0.25}$, $\mathcal{L}_{0.50}$, and $\mathcal{L}_{0.75}$ suggests that the Gaussian mixture parameterization effectively captures the conditional distribution of net worth given the predictor variables. The relatively low standard deviations indicate stable performance across folds.
 
-RealNVP shows moderate cross-validation performance, with quantile losses higher than both QRF and MDN. The higher variance across folds (standard deviations of 0.17--0.26) suggests some sensitivity to the particular training sample. The normalizing flow architecture may require more data or hyperparameter tuning to achieve optimal performance on this tabular regression task.
+RealNVP shows moderate cross-validation performance, with quantile losses higher than both QRF and MDN. The higher variance across folds (standard deviations of 0.17--0.26) suggests some sensitivity to the particular training sample. The normalizing flow architecture may require more data or hyperparameter tuning to achieve optimal performance on this task.
 
 Meanwhile, TabSyn exhibits the worst performance, with loss values degrading substantially at higher quantiles. While $\mathcal{L}_{0.25}$ is comparable to RealNVP, $\mathcal{L}_{0.75}$ is nearly three times larger. This asymmetry suggests that the VAE-diffusion architecture consistently underpredicts, struggling to capture the upper tail of the wealth distribution during cross-validation. The low standard deviations indicate this pattern spans across folds rather than being a result of sampling variability.
 
 \subsection{Final Imputation Results}
-
-After cross-validation, each model was trained on the full SCF dataset and used to impute net worth onto the CPS. Table~\ref{tab:distributional} presents two distributional accuracy metrics comparing the imputed CPS distributions to the SCF donor distribution.
 
 \begin{table}[H]
 \centering
@@ -96,9 +96,9 @@ TabSyn & $12,665,210$ & $0.168$ \\
 \end{tabular}
 \end{table}
 
-The distributional accuracy results shed important light on each model's ability to preserve the overall wealth distribution in the imputed CPS data, complementing the cross-validation measure of conditional accuracy. Despite achieving the best CV quantile loss, MDN produces an imputed distribution with Wasserstein distance 2.5 times larger than QRF. Nonetheless, it is still the model with best distributional accuracy out of the deep learning methodologies studied. More dramatically, RealNVP and TabSyn produce a Wasserstein distance four orders of magnitude larger than QRF, indicating very poor distributional preservation. The KS statistic provides a complementary perspective. QRF achieves the lowest KS statistic (0.041), indicating that its imputed CDF closely tracks the SCF distribution. MDN follows closely (0.049), while TabSyn (0.168) and RealNVP (0.230) show substantially larger maximum CDF deviations.
+The distributional accuracy results shed important light on each model's ability to preserve the overall wealth distribution in the imputed CPS data, complementing the cross-validation measure of conditional accuracy. Despite achieving the best CV quantile loss, MDN produces an imputed distribution with Wasserstein distance 2.5 times larger than QRF. Nonetheless, it is still the model with best distributional accuracy out of the deep learning methodologies studied. Contrastingly, RealNVP and TabSyn produce a Wasserstein distance four orders of magnitude larger than QRF, indicating very poor distributional preservation. The KS statistic provides a complementary perspective. QRF achieves the lowest KS statistic (0.041), indicating that its imputed CDF closely tracks the SCF distribution. MDN follows closely (0.049), while TabSyn (0.168) and RealNVP (0.230) show substantially larger maximum CDF deviations.
 
-While QRF produces imputed values with a 99th percentile close to the SCF's \$13.2 million and a 1st percentile near the SCF's $-$\$72,000, accurately preserving both tails, and MDN closely approximates these percentiles with its Gaussian mixtures, the TabSyn model over-generates extreme values, with a 99th percentile of \$231 million (17 times too high). These implausible extremes dominate the Wasserstein distance calculation. RealNVP exhibits even more severe tail inflation with its wide close-to-simetrical distribution, producing extreme values that result in the largest Wasserstein distance despite acceptable CV loss, and completely missing the true shape of the net worth distribution when imputing. It seems that certain models optimized for conditional prediction accuracy (minimizing expected loss) may learn to produce conservative, mean-regressing predictions that fail to preserve distributional properties, making it crucial to also measure distributional accuracy when benchmarking performance.
+While QRF produces imputed values with a 99th percentile close to the SCF's \$13.2 million and a 1st percentile near the SCF's $-$\$72,000, accurately preserving both tails, and MDN closely approximates these percentiles with its Gaussian mixtures, the TabSyn model over-generates extreme values, with a 99th percentile of \$231 million (17 times too high). These implausible extremes dominate the Wasserstein distance calculation. RealNVP exhibits even more severe tail inflation with its wide close-to-symmetrical distribution, producing extreme values that result in the largest Wasserstein distance despite acceptable CV loss, and completely missing the true shape of the net worth distribution when imputing. It seems that certain models optimized for conditional prediction accuracy (minimizing expected loss) may learn to produce conservative, mean-regressing predictions that fail to preserve distributional properties, making it crucial to also measure distributional accuracy when benchmarking performance.
 
 \begin{figure}[H]
 \centering
@@ -136,11 +136,4 @@ Several limitations should be considered when interpreting these results:
     \item \textbf{Hyperparameter sensitivity}: The deep learning models' performance depends on architecture and training choices that were not exhaustively optimized in this study.
 \end{itemize}
 
-Given MDN's promising results, future work should explore whether alternative hyperparameter configurations could enable it to surpass QRF. Potential directions include:
-\begin{itemize}
-    \item Increasing the number of Gaussian mixture components beyond the five used here, potentially allowing better capture of the wealth distribution's heavy tails.
-    \item Experimenting with alternative mixture distributions (e.g., Student-t components) that naturally accommodate heavier tails than Gaussians.
-    \item Incorporating regularization techniques specifically designed to prevent the distribution compression observed in our results.
-    \item Exploring deeper or wider network architectures to improve the network's capacity to learn complex conditional relationships.
-    \item Evaluating whether increased training time allows for significant performance improvements.
-\end{itemize}
+Given MDN's promising results, future work should explore whether alternative hyperparameter configurations could enable it to surpass QRF. Potential directions include increasing the number of Gaussian mixture components beyond the five used, as well as the training time to determine whether it yields improvement or results in overfitting. Incorporating regularization techniques specifically designed to prevent distribution compression could also help address some of the limitations observed in our results. Experimenting with alternative mixture distributions (e.g., Student-t components) that naturally accommodate heavier tails than Gaussians may be one of the more promising avenues to capture more complex distributions in other contexts, while deeper or wider architectures may help improve the network's capacity to learn complex conditional relationships.
